@@ -1,47 +1,77 @@
 from flask import Flask, request, jsonify
-from firebase_admin import credentials, firestore, initialize_app
-import openai
-import os
+import openai, os, json, tempfile
+import firebase_admin
+from firebase_admin import credentials, firestore
+import requests
+import whisper
+
+# Load ENV vars
+openai.api_key = os.environ.get("OPENAI_API_KEY")
+hume_api_key = os.environ.get("HUME_API_KEY")
+firebase_creds = json.loads(os.environ.get("FIREBASE_CREDS_JSON"))
+
+# Firebase init
+cred = credentials.Certificate(firebase_creds)
+firebase_admin.initialize_app(cred)
+db = firestore.client()
+
+# Load Whisper model
+whisper_model = whisper.load_model("base")
 
 app = Flask(__name__)
 
-# Init Firestore DB
-cred = credentials.Certificate('firebase-service-account.json')
-default_app = initialize_app(cred)
-db = firestore.client()
-crumbs_ref = db.collection('crumbs')
-
-# Set OpenAI API key
-openai.api_key = os.getenv("OPENAI_API_KEY")
-
-@app.route('/')
-def home():
-    return 'WRDO Brain is running.'
-
-@app.route('/chat', methods=['POST'])
+@app.route("/chat", methods=["POST"])
 def chat():
-    data = request.get_json()
-    user_id = data.get('user_id')
-    message = data.get('message')
+    if 'audio' in request.files:
+        audio_file = request.files['audio']
 
-    # Save crumb
-    if user_id and message:
-        crumbs_ref.add({'user_id': user_id, 'message': message})
+        # Save file temporarily
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
+            audio_path = tmp.name
+            audio_file.save(audio_path)
 
-    # Optional: Basic command handling
-    if message.lower().startswith("/todo"):
-        return jsonify({"response": "Task noted. (To-Do list not yet live.)"})
+        # Transcribe
+        transcript = whisper_model.transcribe(audio_path)["text"]
 
-    # Call OpenAI
+        # Emotion detection via Hume
+        hume_result = requests.post(
+            "https://api.hume.ai/v0/stream/models/voice/emotion",
+            headers={"X-Hume-Api-Key": hume_api_key},
+            files={"file": open(audio_path, "rb")}
+        ).json()
+        
+        emotion = hume_result.get("predictions", [{}])[0].get("emotions", [{}])[0].get("name", "neutral")
+
+        os.remove(audio_path)  # clean temp file
+
+    else:
+        # Text only mode
+        transcript = request.json.get("text")
+        emotion = "neutral"
+
+    # Generate GPT reply with emotional tone
+    prompt = f"Reply to this message with a {emotion} tone: {transcript}"
     response = openai.ChatCompletion.create(
-        model="gpt-4",
-        messages=[
-            {"role": "system", "content": "You are WRDO, a smart emotional assistant."},
-            {"role": "user", "content": message}
-        ]
+        model="gpt-3.5-turbo",
+        messages=[{"role": "user", "content": prompt}]
     )
+    reply = response['choices'][0]['message']['content']
 
-    return jsonify({"response": response.choices[0].message['content']})
+    # Save Crumb to Firestore
+    db.collection("crumbs").add({
+        "text": transcript,
+        "emotion": emotion,
+        "reply": reply,
+        "source": "audio" if 'audio' in request.files else "text",
+        "created_at": firestore.SERVER_TIMESTAMP
+    })
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    return jsonify({
+        "you_said": transcript,
+        "emotion": emotion,
+        "wrdo_replied": reply
+    })
+
+if __name__ == "__main__":
+    app.run(debug=True)
+
