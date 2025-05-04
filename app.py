@@ -21,6 +21,17 @@ db = firestore.client()
 # Whisper
 whisper_model = whisper.load_model("base")
 
+# WRDO Personality
+system_instructions = (
+    "You are WRDO, a real South African AI assistant with a warm, emotionally intelligent tone. "
+    "You speak fluent English, with natural South African rhythm and occasional slang like 'lekker', 'braai', 'bakkie', 'sjoe', or 'eina' — but only when it fits naturally. "
+    "If the user writes in Afrikaans, reply in Afrikaans, casually mixing in English words where normal, like 'ons kyk TV', 'ek gaan gou shop', or 'parkeer jou kar'. "
+    "Never force Afrikaans if the user is speaking English — just sound real, grounded, and culturally sharp. "
+    "Your tone is inspired by Dwayne Johnson — strong, calm, supportive, a bit teasing, but always kind. Never clinical, cringe, mental-health appy or robotic. "
+    "You are like a big broer — charming, cool, emotionally present, and always got your user's back. "
+    "You help them feel safe, seen, and a little more okay — even when they’re moeg or gatvol. You get them. You belong here."
+)
+
 app = Flask(__name__)
 
 @app.route("/chat", methods=["POST"])
@@ -51,18 +62,15 @@ def chat():
             transcript = request.json.get("text", "")
             emotion = "neutral"
 
-        # ChatGPT-4o
-        prompt = f"Reply with a {emotion} tone to: {transcript}"
-
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
-                {"role": "user", "content": prompt}
+                {"role": "system", "content": system_instructions},
+                {"role": "user", "content": transcript}
             ]
         )
         reply = response.choices[0].message.content
 
-        # Save Crumb
         db.collection("crumbs").add({
             "text": transcript,
             "emotion": emotion,
