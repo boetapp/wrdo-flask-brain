@@ -1,21 +1,24 @@
 from flask import Flask, request, jsonify
-import openai, os, json, tempfile
+import os, json, tempfile, requests
+from openai import OpenAI
 import firebase_admin
 from firebase_admin import credentials, firestore
-import requests
 import whisper
 
-# Load environment variables
-openai.api_key = os.environ.get("OPENAI_API_KEY")
+# ENV VARS
+openai_api_key = os.environ.get("OPENAI_API_KEY")
 hume_api_key = os.environ.get("HUME_API_KEY")
 firebase_creds = json.loads(os.environ.get("FIREBASE_CREDS_JSON"))
 
-# Firebase setup
+# OpenAI Client
+client = OpenAI(api_key=openai_api_key)
+
+# Firebase Setup
 cred = credentials.Certificate(firebase_creds)
 firebase_admin.initialize_app(cred)
 db = firestore.client()
 
-# Load Whisper model
+# Whisper
 whisper_model = whisper.load_model("base")
 
 app = Flask(__name__)
@@ -44,18 +47,22 @@ def chat():
             )
 
             os.remove(audio_path)
-
         else:
             transcript = request.json.get("text", "")
             emotion = "neutral"
 
-        prompt = f"Reply to this message with a {emotion} tone: {transcript}"
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[{"role": "user", "content": prompt}]
-        )
-        reply = response['choices'][0]['message']['content']
+        # ChatGPT-4o
+        prompt = f"Reply with a {emotion} tone to: {transcript}"
 
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "user", "content": prompt}
+            ]
+        )
+        reply = response.choices[0].message.content
+
+        # Save Crumb
         db.collection("crumbs").add({
             "text": transcript,
             "emotion": emotion,
