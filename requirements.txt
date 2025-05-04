@@ -1,5 +1,5 @@
+openai
 flask
 firebase-admin
-openai
-gunicorn
-openai-whisper
+requests
+git+https://github.com/openai/whisper.git
