@@ -21,7 +21,7 @@ db = firestore.client()
 # Whisper
 whisper_model = whisper.load_model("base")
 
-# WRDO Personality
+# WRDO Personality System Instruction
 system_instructions = (
     "You are WRDO, a real South African AI assistant with a warm, emotionally intelligent tone. "
     "You speak fluent English, with natural South African rhythm and occasional slang like 'lekker', 'braai', 'bakkie', 'sjoe', or 'eina' — but only when it fits naturally. "
@@ -38,6 +38,7 @@ app = Flask(__name__)
 def chat():
     try:
         if 'audio' in request.files:
+            # Audio input (speech to text)
             audio_file = request.files['audio']
             with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
                 audio_path = tmp.name
@@ -45,6 +46,7 @@ def chat():
 
             transcript = whisper_model.transcribe(audio_path)["text"]
 
+            # Hume emotion detection
             hume_response = requests.post(
                 "https://api.hume.ai/v0/stream/models/voice/emotion",
                 headers={"X-Hume-Api-Key": hume_api_key},
@@ -59,9 +61,11 @@ def chat():
 
             os.remove(audio_path)
         else:
+            # Text input
             transcript = request.json.get("text", "")
             emotion = "neutral"
 
+        # ChatGPT response
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
@@ -71,6 +75,7 @@ def chat():
         )
         reply = response.choices[0].message.content
 
+        # Save to Firestore
         db.collection("crumbs").add({
             "text": transcript,
             "emotion": emotion,
